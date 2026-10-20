@@ -34,11 +34,12 @@ Sube `index.html` a un repositorio y activa Settings → Pages → Deploy from b
 Arrastra la carpeta a https://app.netlify.com/drop
 
 ## Cómo se guarda el progreso
-- El historial y los intentos se guardan en el navegador (`localStorage`).
-- Para pasarlo a otro dispositivo, usa **Exportar progreso** e **Importar progreso** en la pantalla de inicio. Al importar, se combina con lo que ya tengas.
+- Siempre se guarda en el navegador (`localStorage`).
+- **Sincronizar entre dispositivos:** en la pantalla de inicio, sección *Guardar tu progreso*, conecta un token de GitHub con permiso `gist`. El progreso se guarda en un gist privado tuyo (`progreso-ai901.json`) y se combina automáticamente en cada dispositivo donde conectes el mismo token.
+- Sin GitHub, usa **Exportar progreso** e **Importar progreso**.
 
 ## Traducción
-Cada pregunta tiene el botón **Traducir en Google**, que abre el enunciado y las alternativas en Google Translate en otra pestaña.
+El botón **Ver traducción** traduce el enunciado y las alternativas en la misma página. Usa el servicio web de Google Translate y, si falla, MyMemory. Cada traducción queda guardada en el navegador. Necesita internet.
 
 ## Actualizar las preguntas
 Las preguntas están dentro de `index.html`, en `<script id="bank" type="application/json">`. Su formato es:

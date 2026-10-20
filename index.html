@@ -149,7 +149,7 @@ let cfg=Object.assign({mode:'exam',n:50,min:45,cats:[0,1],topics:[],pool:'all'},
 let S=null, tick=null, view='setup';
 let TR=LS.get('tr',{}), shown=new Set(), busy=new Set(), trErr={}, sampleFn=null;
 try{ if(window.claude&&window.claude.use){ window.claude.use('sample').then(f=>{sampleFn=f; if(f&&view==='q')render(); if(f&&view==='results'&&window.__relist)window.__relist();}).catch(()=>{}); } }catch(e){}
-let cloud={ref:null,status:'local',busy:false,again:false,timer:null};
+let cloud={write:null,status:'local',busy:false,again:false,timer:null};
 function mergeHist(a,b){const o=Object.assign({},a);for(const k in b){const x=o[k],y=b[k];if(!x||(y.ok+y.bad)>=(x.ok+x.bad))o[k]=y}return o}
 function mergeRuns(a,b){const m=new Map();[...a,...b].forEach(r=>m.set(r.date+'|'+r.n+'|'+r.ok+'|'+r.mode,r));return [...m.values()].sort((x,y)=>(x.ts||0)-(y.ts||0)).slice(-30)}
 async function cloudInit(){
@@ -161,27 +161,56 @@ async function cloudInit(){
     const ref=db.doc('data/users/'+uid+'/progress');
     const snap=await ref.get();
     if(snap.exists){const d=snap.data()||{};hist=mergeHist(hist,d.hist||{});runs=mergeRuns(runs,Array.isArray(d.runs)?d.runs:[]);LS.set('hist',hist);LS.set('runs',runs)}
-    cloud.ref=ref; cloud.status='sync';
+    cloud.write=d=>ref.set(d); cloud.status='sync';
     if(!snap.exists&&(Object.keys(hist).length||runs.length))saveCloud(true);
     if(view==='setup')setup();
   }catch(e){cloud.status='local'; if(view==='setup')setup();}
 }
 function saveCloud(now){
-  if(!cloud.ref)return;
+  if(!cloud.write)return;
   clearTimeout(cloud.timer);
   cloud.timer=setTimeout(async()=>{
     if(cloud.busy){cloud.again=true;return}
     cloud.busy=true;
-    try{await cloud.ref.set({hist,runs,updated:Date.now()});cloud.status='sync'}
+    try{await cloud.write({hist,runs,updated:Date.now()});cloud.status=cloud.okStatus||'sync'}
     catch(e){cloud.status=(e&&e.code==='quota_exceeded')?'full':'error'}
     cloud.busy=false;
     if(cloud.again){cloud.again=false;saveCloud(true)}
   },now?0:1200);
 }
+const GH={token:LS.get('ghtoken',''),gistId:LS.get('gistid','')};
+async function gh(path,opt){opt=opt||{};const r=await fetch('https://api.github.com'+path,Object.assign({},opt,{headers:Object.assign({'Authorization':'Bearer '+GH.token,'Accept':'application/vnd.github+json'},opt.body?{'Content-Type':'application/json'}:{})}));if(!r.ok)throw {status:r.status};return r.json()}
+const GFILE='progreso-ai901.json';
+async function ghInit(){
+  if(!GH.token){cloud.write=null;cloud.status='local';return}
+  cloud.status='connecting'; if(view==='setup')setup();
+  try{
+    let g=null;
+    if(GH.gistId){try{g=await gh('/gists/'+GH.gistId)}catch(e){if(e.status===401)throw e;g=null}}
+    if(!g){const list=await gh('/gists?per_page=100');const f=list.find(x=>x.description==='ai901-sim-progress');if(f)g=await gh('/gists/'+f.id)}
+    if(g){const file=g.files&&g.files[GFILE];let c=file&&file.content;if(file&&file.truncated)c=await (await fetch(file.raw_url)).text();
+      if(c){try{const d=JSON.parse(c);hist=mergeHist(hist,d.hist||{});runs=mergeRuns(runs,Array.isArray(d.runs)?d.runs:[]);LS.set('hist',hist);LS.set('runs',runs)}catch(e){}}}
+    else{g=await gh('/gists',{method:'POST',body:JSON.stringify({description:'ai901-sim-progress',public:false,files:{[GFILE]:{content:JSON.stringify({hist,runs,updated:Date.now()})}}})})}
+    GH.gistId=g.id;LS.set('gistid',g.id);
+    cloud.write=d=>gh('/gists/'+GH.gistId,{method:'PATCH',body:JSON.stringify({files:{[GFILE]:{content:JSON.stringify(d)}}})});
+    cloud.okStatus='gist';cloud.status='gist';saveCloud(true);
+  }catch(e){cloud.write=null;cloud.status=e&&e.status===401?'badtoken':'error'}
+  if(view==='setup')setup();
+}
+window.addEventListener('focus',()=>{if(GH.token&&view==='setup'&&cloud.status==='gist')ghInit()});
 const ERRS={not_granted:'No se permitió usar Claude para traducir en esta página.',sampling_disabled:'La traducción no está disponible para esta cuenta.',rate_limited:'Demasiadas traducciones seguidas. Espera un momento e inténtalo otra vez.',session_expired:'Tu sesión expiró. Vuelve a iniciar sesión.',invalid_json:'La traducción llegó incompleta. Inténtalo otra vez.'};
+async function gtx(t){const r=await fetch('https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=es&dt=t&q='+encodeURIComponent(t));if(!r.ok)throw new Error('gtx '+r.status);const j=await r.json();return (j[0]||[]).map(x=>x[0]).join('')}
+async function mym(t){const parts=t.match(/[^.!?\n]+[.!?]*\s*|\n+/g)||[t];const chunks=[];let cur='';for(const p of parts){if((cur+p).length>450&&cur){chunks.push(cur);cur=''}cur+=p}if(cur)chunks.push(cur);
+  const out=[];for(const c of chunks){if(!c.trim()){out.push(c);continue}const r=await fetch('https://api.mymemory.translated.net/get?langpair=en|es&q='+encodeURIComponent(c));const j=await r.json();if(!j||!j.responseData||j.responseStatus!==200)throw new Error('mym');out.push(j.responseData.translatedText+(c.match(/\s*$/)[0]))}return out.join('')}
+async function plain(t){const m=t.match(/^(\s*)([\s\S]*?)(\s*)$/);if(!m[2])return t;let r;try{r=await gtx(m[2])}catch(e){r=await mym(m[2])}return m[1]+r+m[3]}
+async function tr1(t){if(t==null)return null;const parts=String(t).split(/(```[\s\S]*?```)/);return (await Promise.all(parts.map(p=>p.startsWith('```')?p:plain(p)))).join('')}
+async function webTranslate(q){const [qq,...oo]=await Promise.all([tr1(q.text),...q.opts.map(o=>o===null?null:tr1(o))]);return {q:qq,o:oo}}
 async function translate(q,after){
   if(TR[q.id]){shown.add(q.id);after();return}
-  if(!sampleFn||busy.has(q.id))return;
+  if(busy.has(q.id))return;
+  if(!sampleFn){busy.add(q.id);delete trErr[q.id];after();
+    try{TR[q.id]=await webTranslate(q);LS.set('tr',TR);shown.add(q.id)}catch(e){trErr[q.id]=navigator.onLine===false?'Sin conexión: la traducción necesita internet.':'No se pudo traducir ahora. Inténtalo otra vez en unos segundos.'}
+    busy.delete(q.id);after();return}
   busy.add(q.id); delete trErr[q.id]; after();
   const idx=q.opts.map((o,k)=>o===null?-1:k).filter(k=>k>=0);
   const prompt='Traduce al español neutro el enunciado y las alternativas de esta pregunta de un examen de certificación Microsoft (AI-901, Azure AI Fundamentals).\n'
@@ -196,10 +225,7 @@ async function translate(q,after){
   }catch(e){ if(e&&e.code!=='cancelled') trErr[q.id]=ERRS[e&&e.code]||'No se pudo traducir. Inténtalo otra vez.'; }
   busy.delete(q.id); after();
 }
-function gtLink(q){const t=(q.text+'\n\n'+q.opts.map((o,k)=>o===null?'':L[k]+'. '+o).filter(Boolean).join('\n')).slice(0,4500);
-  return 'https://translate.google.com/?sl=en&tl=es&op=translate&text='+encodeURIComponent(t)}
 function trButton(q,id){
-  if(!sampleFn&&!TR[q.id])return `<div class="trbar"><a class="btn ghost trbtn" href="${gtLink(q)}" target="_blank" rel="noopener">Traducir en Google</a></div>`;
   const on=shown.has(q.id)&&TR[q.id];
   return `<div class="trbar"><button class="btn ghost trbtn" id="${id}" ${busy.has(q.id)?'disabled':''} aria-pressed="${on?'true':'false'}">${busy.has(q.id)?'Traduciendo…':on?'Ocultar traducción':'Ver traducción'}</button>${trErr[q.id]?`<span class="trerr">${esc(trErr[q.id])}</span>`:''}</div>`;
 }
@@ -221,7 +247,7 @@ function setup(){
   app.innerHTML=`<div class="wrap stack">
   <div class="stack" style="gap:6px"><span class="eyebrow">AI-901 · Azure AI Fundamentals</span><h1>Simulador de examen</h1>
   <p class="meta" style="margin:0">${Q.length} preguntas de tu banco validado. El examen real se aprueba con 700 de 1000.</p>
-  <p class="meta" style="margin:0"><span class="pill ${cloud.status==='sync'?'ok':''}" style="${cloud.status==='sync'?'':'background:var(--line);color:var(--muted)'}">${cloud.status==='sync'?'Progreso sincronizado con tu cuenta':cloud.status==='full'?'Sin espacio para sincronizar; se guarda en este navegador':cloud.status==='error'?'No se pudo sincronizar; se guarda en este navegador':'Progreso guardado en este navegador'}</span></p></div>
+  <p class="meta" style="margin:0"><span class="pill ${cloud.status==='sync'||cloud.status==='gist'?'ok':''}" style="${cloud.status==='sync'||cloud.status==='gist'?'':'background:var(--line);color:var(--muted)'}">${cloud.status==='gist'?'Progreso sincronizado con tu GitHub':cloud.status==='connecting'?'Conectando con GitHub…':cloud.status==='badtoken'?'El token de GitHub no es válido o venció; se guarda en este navegador':cloud.status==='sync'?'Progreso sincronizado con tu cuenta':cloud.status==='full'?'Sin espacio para sincronizar; se guarda en este navegador':cloud.status==='error'?'No se pudo sincronizar; se guarda en este navegador':'Progreso guardado en este navegador'}</span></p></div>
   <div class="stats">
     <div class="stat"><span class="meta">Preguntas vistas</span><b>${seen}<span class="meta" style="font-size:.9rem"> / ${Q.length}</span></b></div>
     <div class="stat"><span class="meta">Acertadas la última vez</span><b>${okNow}</b></div>
@@ -253,8 +279,16 @@ function setup(){
   ${last.length?`<div class="panel stack"><h2>Intentos recientes</h2><div class="tw"><table><thead><tr><th>Fecha</th><th>Modo</th><th>Preguntas</th><th style="text-align:right">Puntaje</th></tr></thead><tbody>
   ${last.map(r=>`<tr><td>${esc(r.date)}</td><td>${r.mode==='exam'?'Examen':'Práctica'}</td><td>${r.ok}/${r.n}</td><td class="n">${r.score} <span class="pill ${r.score>=700?'ok':'bad'}">${r.score>=700?'Aprobado':'No aprobado'}</span></td></tr>`).join('')}
   </tbody></table></div><div><button class="btn ghost" id="reset" style="font-size:.85rem">Borrar mi historial</button></div><div id="rc"></div></div>`:''}
-  <div class="panel stack"><h2>Llevar tu progreso a otro dispositivo</h2>
-    <p class="meta" style="margin:0">Tu progreso se guarda en este navegador. Exporta un archivo aquí e impórtalo en el otro dispositivo; se combina con lo que ya tengas.</p>
+  <div class="panel stack"><h2>Guardar tu progreso</h2>
+    <p class="meta" style="margin:0">Tu progreso se guarda solo en este navegador. Para verlo también en tu celular o en otra computadora, conecta tu cuenta de GitHub: se guarda en un gist privado tuyo y se sincroniza solo.</p>
+    ${GH.token?`<div class="row"><span class="meta">${cloud.status==='gist'?'Conectado. Cada respuesta se guarda en tu GitHub.':cloud.status==='connecting'?'Conectando…':'No se pudo conectar con este token.'}</span><button class="btn ghost" id="ghsync" style="font-size:.85rem">Sincronizar ahora</button><button class="btn ghost" id="ghoff" style="font-size:.85rem">Desconectar</button></div>`:
+    `<ol class="meta" style="margin:0;padding-left:20px">
+      <li>Abre <a href="https://github.com/settings/tokens/new?scopes=gist&amp;description=Simulador%20AI-901" target="_blank" rel="noopener">este enlace de GitHub</a> (ya trae marcado solo el permiso <b>gist</b>).</li>
+      <li>Elige la expiración que prefieras, toca <b>Generate token</b> y copia el token (empieza con <code>ghp_</code>).</li>
+      <li>Pégalo aquí. Hazlo una vez en cada dispositivo; todos usan el mismo gist.</li></ol>
+    <div class="row"><input id="ghtok" type="password" placeholder="ghp_…" autocomplete="off" style="flex:1;min-width:0;border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--surface)"><button class="btn primary" id="ghon">Conectar</button></div>`}
+    <span class="eyebrow" style="margin-top:4px">Sin GitHub</span>
+    <p class="meta" style="margin:0">También puedes exportar un archivo e importarlo en el otro dispositivo; se combina con lo que ya tengas.</p>
     <div class="row"><button class="btn" id="exp">Exportar progreso</button><label class="btn" for="imp" style="cursor:pointer">Importar progreso</label><input id="imp" type="file" accept="application/json,.json" hidden></div>
     <span class="meta" id="impmsg"></span></div>
   </div>`;
@@ -269,8 +303,11 @@ function setup(){
   app.querySelectorAll('.top').forEach(b=>b.onclick=()=>{const t=+b.dataset.t;cfg.topics=cfg.topics.includes(t)?cfg.topics.filter(x=>x!==t):[...cfg.topics,t];save()});
   document.getElementById('t-clear').onclick=()=>{cfg.topics=[];save()};
   document.getElementById('go').onclick=start;
+  const gon=document.getElementById('ghon');if(gon)gon.onclick=()=>{const v=document.getElementById('ghtok').value.trim();if(!v)return;GH.token=v;LS.set('ghtoken',v);ghInit()};
+  const goff=document.getElementById('ghoff');if(goff)goff.onclick=()=>{GH.token='';GH.gistId='';LS.set('ghtoken','');LS.set('gistid','');cloud.write=null;cloud.status='local';setup()};
+  const gsy=document.getElementById('ghsync');if(gsy)gsy.onclick=()=>ghInit();
   document.getElementById('exp').onclick=()=>{const blob=new Blob([JSON.stringify({app:'ai901-sim',v:1,hist,runs},null,1)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='progreso-ai901-'+new Date().toISOString().slice(0,10)+'.json';document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},500)};
-  document.getElementById('imp').onchange=e=>{const f=e.target.files[0];if(!f)return;f.text().then(t=>{const d=JSON.parse(t);if(!d||typeof d.hist!=='object')throw 0;hist=mergeHist(hist,d.hist);runs=mergeRuns(runs,Array.isArray(d.runs)?d.runs:[]);LS.set('hist',hist);LS.set('runs',runs);setup();const m=document.getElementById('impmsg');if(m)m.textContent='Progreso importado y combinado.'}).catch(()=>{const m=document.getElementById('impmsg');if(m)m.textContent='Ese archivo no es un progreso exportado desde este simulador.'})};
+  document.getElementById('imp').onchange=e=>{const f=e.target.files[0];if(!f)return;f.text().then(t=>{const d=JSON.parse(t);if(!d||typeof d.hist!=='object')throw 0;hist=mergeHist(hist,d.hist);runs=mergeRuns(runs,Array.isArray(d.runs)?d.runs:[]);LS.set('hist',hist);LS.set('runs',runs);saveCloud(true);setup();const m=document.getElementById('impmsg');if(m)m.textContent='Progreso importado y combinado.'}).catch(()=>{const m=document.getElementById('impmsg');if(m)m.textContent='Ese archivo no es un progreso exportado desde este simulador.'})};
   const rs=document.getElementById('reset');
   if(rs) rs.onclick=()=>{document.getElementById('rc').innerHTML=`<div class="confirm row"><span>¿Borrar tu historial y tus intentos guardados?</span><button class="btn" id="rc-y">Sí, borrar</button><button class="btn ghost" id="rc-n">Cancelar</button></div>`;
     document.getElementById('rc-y').onclick=()=>{hist={};runs=[];LS.set('hist',hist);LS.set('runs',runs);saveCloud(true);setup()};
@@ -376,7 +413,7 @@ function results(ok,n,score){
   window.scrollTo({top:0});
 }
 setup();
-cloudInit();
+ghInit();
 })();
 </script>
 
