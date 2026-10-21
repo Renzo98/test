@@ -1,6 +1,18 @@
-# Simulador AI-901
+# Simulador de certificaciones
 
-Simulador de examen con 727 preguntas validadas. Es una sola página estática: `index.html` trae las preguntas incluidas y no necesita servidor ni base de datos.
+Simulador de exámenes de certificación en una sola página estática: `index.html` trae todas las preguntas incluidas y no necesita servidor ni base de datos.
+
+## Exámenes disponibles
+| Examen | Preguntas |
+|---|---|
+| AZ-900 Azure Fundamentals | 172 |
+| DP-900 Azure Data Fundamentals | 185 |
+| AI-901 Azure AI Fundamentals | 727 |
+| Databricks Apache Spark Developer | 114 |
+| Databricks Data Engineer Associate | 244 |
+| Databricks Data Engineer Professional | 53 |
+
+AI-103, AI-200, Generative AI Engineer, PCEP y PCAP aparecen como *Próximamente*.
 
 ## Probarlo en tu computadora
 Haz doble clic en `index.html`, o sírvelo localmente:
@@ -39,8 +51,18 @@ Arrastra la carpeta a https://app.netlify.com/drop
 - Sin GitHub, usa **Exportar progreso** e **Importar progreso**.
 
 ## Traducción
-El botón **Ver traducción** traduce el enunciado y las alternativas en la misma página. Usa el servicio web de Google Translate y, si falla, MyMemory. Cada traducción queda guardada en el navegador. Necesita internet.
+El botón **Ver traducción** muestra el enunciado y las alternativas en español debajo del texto original, en la misma página. Las traducciones de todas las preguntas vienen incluidas dentro de `index.html`, así que aparecen al instante, sin abrir otra página, sin depender de ningún servicio externo y también sin internet. Los nombres de servicios, clases, métodos y el código se dejan en inglés, igual que en el examen. Las explicaciones de las respuestas se muestran en su idioma original (inglés).
+
+## Ayuda por pregunta
+Durante la prueba, el botón **Pedir ayuda** abre un panel con información para razonar la pregunta, sin darte la respuesta. Muestra un resumen del tema de la pregunta y definiciones breves de los conceptos que aparecen en el enunciado y en las alternativas. En computadora el panel aparece a la derecha; en el celular, debajo de la pregunta. Solo se muestra si lo pides, y se cierra al pasar a la siguiente pregunta.
+
+## Varios exámenes
+- Es una sola página para todos tus exámenes. La pantalla de inicio muestra el catálogo de certificaciones agrupado por Microsoft, Databricks y Python Institute. Las que ya tienen banco de preguntas se pueden abrir; las demás aparecen como *Próximamente*. Desde el simulador, **← Todas las certificaciones** te devuelve al catálogo.
+- Cada examen tiene su propio progreso, su historial de intentos, sus filtros y su puntaje mínimo de aprobación.
+- El mismo token de GitHub sincroniza todos los exámenes en el mismo gist privado. El archivo de exportación también los incluye todos.
+- Tu progreso de AI-901 de la versión anterior se conserva tal cual.
+- Para agregar un examen, envía el archivo de preguntas (PDF, JSON o Excel) y se genera un `index.html` nuevo con el examen incluido, junto con sus traducciones.
 
 ## Actualizar las preguntas
 Las preguntas están dentro de `index.html`, en `<script id="bank" type="application/json">`. Su formato es:
-`{"cats":[...], "topics":[...], "q":[[id, índiceCategoría, índiceTema, enunciado, [opción A..E], [índices correctos], explicación], ...]}`
+`{"exams":[{"id":"AI-901", "name":"...", "pass":700, "data":{"cats":[...], "topics":[...], "q":[[id, índiceCategoría, índiceTema, enunciado, [opción A..E], [índices correctos], explicación], ...]}, "tre":{id:{"q":..., "o":[...]}}}, ...]}`
